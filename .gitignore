@@ -1,0 +1,98 @@
+# ============================================================================
+# CRITICAL — THIS IS A PUBLIC REPOSITORY
+# ============================================================================
+# An unpatched vulnerability committed to a public repo is an accidental
+# zero-day disclosure. It harms users of the affected software, destroys your
+# standing with the maintainer, and can void bug-bounty eligibility.
+#
+# Nothing below this line is tracked. Do not "just this once" force-add it.
+# ============================================================================
+
+# Live finding workspace — unpublished vulnerability details.
+# The directories are tracked (via their README) so they survive a clone;
+# everything inside them is not.
+findings/*
+!findings/README.md
+evidence/*
+!evidence/README.md
+targets/private/
+*.finding.md
+*.poc
+drafts/
+
+# Proof-of-concept and verification artifacts
+poc/
+repro/
+crash/
+corpus/
+*.pcap
+*.har
+*.core
+core.*
+
+# Raw scanner output (may contain source snippets from targets under audit)
+scan-results/
+*.sarif
+semgrep-*.json
+osv-*.json
+trivy-*.json
+dependency-check-report.*
+
+# Target source checkouts — never vendor a target into this repo
+work/
+clones/
+sandbox/
+targets/src/
+
+# ---------------------------------------------------------------------------
+# Credentials — see SECRETS_HYGIENE.md
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+.pypirc
+credentials
+credentials.json
+service-account*.json
+gh-token*
+*token*.txt
+secrets.*
+!secrets.example.*
+
+# ---------------------------------------------------------------------------
+# Tooling / OS noise
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+*.log
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Decompiled / unpacked mobile artifacts (P4)
+*.apk
+*.aab
+*.ipa
+*.dex
+unpacked/
+jadx-out/
+apktool-out/

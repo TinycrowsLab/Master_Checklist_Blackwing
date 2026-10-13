@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Blocks the two mistakes that would do real damage from this public repo:
+#   1. committing unpublished vulnerability details (accidental 0-day disclosure)
+#   2. committing a credential
+#
+# Install:  git config core.hooksPath .githooks
+# Caveat:   `git commit --no-verify` bypasses this. That flag is not a tool for
+#           getting past a complaint you disagree with — if this fires, stop and
+#           look at what you staged.
+
+set -uo pipefail
+
+fail=0
+say() { printf '%s\n' "$*" >&2; }
+
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    against=HEAD
+else
+    against=$(git hash-object -t tree /dev/null)
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR "$against")
+[ -z "$staged" ] && exit 0
+
+# --- 1. protected paths -----------------------------------------------------
+# Mirrors .gitignore. Caught here too, because `git add -f` defeats .gitignore.
+protected_re='^(findings|evidence|work|clones|sandbox|poc|repro|crash|corpus|drafts|scan-results)/|^targets/(private|src)/|\.(finding\.md|poc|sarif|pcap|har|apk|aab|ipa|dex)$'
+# findings/README.md and evidence/README.md are the tracked placeholders that
+# keep those directories alive in a clone. Everything else under them is blocked.
+allowed_re='^(findings|evidence)/README\.md$'
+
+offenders=$(printf '%s\n' "$staged" | grep -E "$protected_re" | grep -Ev "$allowed_re" || true)
+if [ -n "$offenders" ]; then
+    say ""
+    say "BLOCKED: staged files live in a protected path."
+    say ""
+    printf '%s\n' "$offenders" | sed 's/^/  /' >&2
+    say ""
+    say "These paths hold unpublished vulnerability details or target source."
+    say "This repository is PUBLIC. Committing an unfixed finding here discloses"
+    say "it to the world before the maintainer has a patch out."
+    say ""
+    say "Unstage with:  git restore --staged <file>"
+    say ""
+    fail=1
+fi
+
+# --- 2. credential patterns -------------------------------------------------
+# High-signal prefixes only. A generic 'password=' rule would cry wolf on every
+# checklist that mentions the word, and a hook nobody trusts gets --no-verify'd.
+read -r -d '' patterns <<'PATTERNS' || true
+ghp_[A-Za-z0-9]{36}
+github_pat_[A-Za-z0-9_]{60,}
+gh[osur]_[A-Za-z0-9]{36}
+AKIA[0-9A-Z]{16}
+ASIA[0-9A-Z]{16}
+sk-ant-[A-Za-z0-9_-]{20,}
+xox[baprs]-[A-Za-z0-9-]{10,}
+AIza[0-9A-Za-z_-]{35}
+glpat-[A-Za-z0-9_-]{20,}
+npm_[A-Za-z0-9]{36}
+pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{10,}
+[-]{5}BEGIN [A-Z ]*PRIVATE KEY
+PATTERNS
+
+while IFS= read -r file; do
+    # Skip this hook and the hygiene doc: both legitimately contain the patterns.
+    case "$file" in
+        .githooks/pre-commit|SECRETS_HYGIENE.md) continue ;;
+    esac
+    [ -f "$file" ] || continue
+
+    while IFS= read -r pat; do
+        [ -z "$pat" ] && continue
+        if hit=$(git show ":$file" 2>/dev/null | grep -nEo -e "$pat" | head -3); then
+            if [ -n "$hit" ]; then
+                say ""
+                say "BLOCKED: possible credential in $file"
+                printf '  %s\n' "$hit" >&2
+                say ""
+                say "If this is real: do NOT just unstage it. Revoke the credential first"
+                say "(it may already be in your local git objects or shell history), then"
+                say "see SECRETS_HYGIENE.md."
+                say ""
+                fail=1
+            fi
+        fi
+    done <<<"$patterns"
+done <<<"$staged"
+
+if [ "$fail" -ne 0 ]; then
+    say "Commit aborted by .githooks/pre-commit"
+    exit 1
+fi
+
+exit 0
