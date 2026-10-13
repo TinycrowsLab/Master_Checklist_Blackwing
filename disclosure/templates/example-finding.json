@@ -1,0 +1,244 @@
+{
+  "id": "F-2026-001-acme-archive-zip-slip",
+  "fingerprint": "acme-archive/extract-entry/path-traversal",
+  "verdict": "confirmed",
+  "state": "verified",
+  "found_by": "hunter-p1-archive-pass",
+  "verified_by": "verifier-independent-01",
+  "title": "Path traversal via unnormalised archive entry names in extractAll()",
+  "summary": "extractAll() joins each archive entry's stored name onto the destination directory without normalising it or verifying the result stays inside that directory. An archive containing an entry named ../../tmp/pwned causes a write outside the destination. The entry name is attacker-controlled whenever a consumer extracts an archive it did not author, which is the library's documented purpose.",
+  "cwe": [
+    "CWE-22"
+  ],
+  "target": {
+    "name": "acme-archive",
+    "ecosystem": "npm",
+    "repo_url": "https://github.com/example-org/acme-archive",
+    "commit_sha": "3f2a1b4c5d6e7f8091a2b3c4d5e6f7a8b9c0d1e2",
+    "release_tag": "v2.4.0",
+    "versions_tested": [
+      {
+        "version": "2.4.0",
+        "result": "vulnerable",
+        "note": "Current release at time of testing."
+      },
+      {
+        "version": "2.3.1",
+        "result": "vulnerable"
+      },
+      {
+        "version": "1.7.9",
+        "result": "not_vulnerable",
+        "note": "extractAll() introduced in 1.8.0."
+      },
+      {
+        "version": "2.4.1",
+        "result": "not_vulnerable",
+        "note": "Used as the negative control."
+      }
+    ],
+    "first_affected": "1.8.0",
+    "last_affected": "2.4.0",
+    "fixed_in": "2.4.1",
+    "introducing_commit": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4"
+  },
+  "trace": [
+    {
+      "kind": "entrypoint",
+      "file": "src/index.js",
+      "line": 41,
+      "code": "export async function extractAll(archivePath, destDir, opts = {}) {",
+      "note": "Documented public API. The archive is third-party data by design; the README's first example extracts a downloaded release tarball."
+    },
+    {
+      "kind": "propagation",
+      "file": "src/reader.js",
+      "line": 118,
+      "code": "const entryName = header.name;",
+      "note": "Entry name read verbatim from the archive header. No normalisation, no rejection of absolute paths or traversal segments."
+    },
+    {
+      "kind": "propagation",
+      "file": "src/writer.js",
+      "line": 63,
+      "code": "const outPath = path.join(destDir, entryName);",
+      "note": "path.join collapses traversal segments but does not confine the result to destDir. path.resolve followed by a prefix check would; neither is present."
+    },
+    {
+      "kind": "sink",
+      "file": "src/writer.js",
+      "line": 77,
+      "code": "await fs.writeFile(outPath, entryData, { mode: header.mode });",
+      "note": "Write occurs at the traversed path, with the mode stored in the archive."
+    }
+  ],
+  "reachability": {
+    "reachable_from_untrusted_entrypoint": true,
+    "default_configuration": true,
+    "entrypoint": "extractAll(archivePath, destDir) — the library's primary documented export",
+    "missing_guard": "No path.resolve + startsWith(destDir) confinement check between reader.js:118 and writer.js:77.",
+    "note": "No option gates the behaviour. opts.strict exists but only controls checksum verification; it does not affect entry-name handling."
+  },
+  "conditions": [
+    {
+      "kind": "precondition_other",
+      "description": "The consumer must extract an archive from an untrusted source. This is the library's documented use case rather than a limiting condition, but it is stated because a consumer that only extracts archives it produced itself is unaffected."
+    },
+    {
+      "kind": "privilege_required",
+      "description": "The process must have write permission to the traversed destination. Writing to a privileged path requires a privileged process; under an unprivileged user the impact is confined to paths that user can already write."
+    }
+  ],
+  "severity": {
+    "likelihood": "high",
+    "impact": "high",
+    "overall": "high",
+    "cvss_version": "3.1",
+    "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:L/I:H/A:L",
+    "cvss_score": 7.1,
+    "justification": "Arbitrary file write within the extracting process's permissions, demonstrated by writing outside destDir. Scored UI:R because a consumer action (extracting) is required, and I:H because the PoC overwrote an arbitrary file. NOT scored Critical: no privilege escalation or code execution was demonstrated, only the write. Severity is capped at what the PoC actually showed, not at what a write could lead to.",
+    "over_scoring_checklist_run": true
+  },
+  "confidence": {
+    "score": "high",
+    "justification": "For this to be wrong, path.join would have to confine results to destDir, which it does not, or a caller-side check would have to reject the entry name before writer.js:63. The whole call path was read at the pinned SHA and no such check exists. The PoC ran three times from a clean container and the negative control failed as expected on 2.4.1."
+  },
+  "reproduction": {
+    "clean_state": true,
+    "unmodified_source": true,
+    "runs": 3,
+    "negative_control_passed": true,
+    "repro_steps": [
+      "docker run --rm -it --network none node:20-alpine sh",
+      "npm install acme-archive@2.4.0 tar",
+      "node -e \"require('tar').c({file:'/tmp/evil.tar',cwd:'/'},['../../tmp/pwned'])\"  # archive with a traversing entry",
+      "node -e \"require('acme-archive').extractAll('/tmp/evil.tar','/tmp/out')\"",
+      "test -f /tmp/pwned && echo 'TRAVERSAL: wrote outside /tmp/out'",
+      "NEGATIVE CONTROL: repeat with acme-archive@2.4.1 and confirm the entry is rejected and /tmp/pwned is absent"
+    ],
+    "environment": {
+      "os": "alpine 3.20 (container)",
+      "runtime": "node",
+      "runtime_version": "20.15.1",
+      "image_digest": "sha256:0e6f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f",
+      "build_command": "npm install acme-archive@2.4.0",
+      "network": "none"
+    },
+    "poc_path": "evidence/F-2026-001-acme-archive-zip-slip/repro.sh",
+    "raw_output_path": "evidence/F-2026-001-acme-archive-zip-slip/output/run-3.log"
+  },
+  "duplicate_check": [
+    {
+      "source": "osv_dev",
+      "query": "POST /v1/query package acme-archive ecosystem npm, repeated per tested version and by commit hash",
+      "url": "https://osv.dev/",
+      "result": "no_match"
+    },
+    {
+      "source": "osv_scanner",
+      "query": "osv-scanner scan source -r . against the pinned lockfile",
+      "result": "no_match"
+    },
+    {
+      "source": "github_advisory_reviewed",
+      "query": "ecosystem:npm acme-archive, reviewed",
+      "url": "https://github.com/advisories",
+      "result": "no_match"
+    },
+    {
+      "source": "github_advisory_unreviewed",
+      "query": "ecosystem:npm acme-archive, unreviewed",
+      "url": "https://github.com/advisories",
+      "result": "no_match"
+    },
+    {
+      "source": "cve_program",
+      "query": "keyword acme-archive across CVE records",
+      "result": "no_match"
+    },
+    {
+      "source": "nvd",
+      "query": "keyword and CPE search for acme-archive",
+      "url": "https://nvd.nist.gov/vuln/search",
+      "result": "no_match"
+    },
+    {
+      "source": "snyk",
+      "query": "npm:acme-archive",
+      "result": "no_match"
+    },
+    {
+      "source": "project_advisories",
+      "query": "repository Security tab, published advisories",
+      "result": "no_match"
+    },
+    {
+      "source": "project_changelog",
+      "query": "CHANGELOG.md searched for traversal, zip-slip, path, security",
+      "result": "no_match"
+    },
+    {
+      "source": "project_issues_and_prs",
+      "query": "is:issue OR is:pr traversal|zip slip|path escape, including closed",
+      "result": "no_match"
+    },
+    {
+      "source": "oss_security",
+      "query": "oss-security list archive search for acme-archive",
+      "result": "no_match"
+    },
+    {
+      "source": "upstream",
+      "query": "git log --all -S 'path.resolve' -S 'entryName' looking for a silent fix",
+      "result": "no_match"
+    }
+  ],
+  "exclusions_checked": [
+    {
+      "clause": "Issues requiring the attacker to already control input the consumer passes deliberately",
+      "applies": false,
+      "reasoning": "The entry name lives inside the archive, not in a parameter the consumer chooses. Extracting an untrusted archive does not constitute choosing its entry names."
+    },
+    {
+      "clause": "Denial of service, small information leaks, local crashes",
+      "applies": false,
+      "reasoning": "Demonstrated impact is an arbitrary file write, not a crash or a leak."
+    },
+    {
+      "clause": "Defence-in-depth gaps, non-default build flags, build scripts",
+      "applies": false,
+      "reasoning": "Present in the shipped default configuration with no flags set."
+    },
+    {
+      "clause": "Unreleased code",
+      "applies": false,
+      "reasoning": "2.4.0 was the current published release when tested."
+    },
+    {
+      "clause": "Test fixtures and example code",
+      "applies": false,
+      "reasoning": "The sink is in src/writer.js, included in the published package's files list."
+    }
+  ],
+  "references": [
+    {
+      "title": "CWE-22: Improper Limitation of a Pathname to a Restricted Directory",
+      "url": "https://cwe.mitre.org/data/definitions/22.html"
+    },
+    {
+      "title": "OWASP Cheat Sheet Series",
+      "url": "https://cheatsheetseries.owasp.org/"
+    }
+  ],
+  "human_signoff": {
+    "signed_off": false,
+    "notes": "Awaiting human review. The reviewer must re-read src/writer.js:63-77 at the pinned SHA, re-run repro.sh from a clean container, and independently agree with the CVSS justification before anything is sent to the maintainer.",
+    "ai_use_disclosure": "Candidate found and this record drafted with AI assistance; a human verified the code path and reproduction before reporting. To be stated plainly to the maintainer."
+  },
+  "disclosure": {
+    "channel": "github_private_vulnerability_reporting",
+    "channel_detail": "Repository has Private Vulnerability Reporting enabled; SECURITY.md directs reports there and states a 90-day coordination window.",
+    "credit_preference": "Credit requested if the project offers it; not a condition of reporting."
+  },
+  "notes": "FICTIONAL WORKED EXAMPLE — 'acme-archive' does not exist. This record shows the shape of a confirmed finding that passes both ../../schemas/finding.schema.json and ../../scripts/validate-finding.py. Copy the structure; do not copy the conclusions. Also note: the sibling streaming extractor at src/stream.js was NOT reviewed in this pass and is recorded as uncovered in the coverage ledger, so 'nothing found there' must not be inferred."
+}
